@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Hand Gesture AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- MediaPipe dependencies for ultra-fast 60 FPS in-browser acceleration -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(16, 24, 40, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #10b981;
+      --accent-glow: rgba(16, 185, 129, 0.35);
+      --accent-cyan: #06b6d4;
+      --accent-purple: #8b5cf6;
+      --text: #f3f4f6;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.1) 0px, transparent 50%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    header {
+      padding: 18px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(9, 13, 22, 0.85);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-cyan));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .brand h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .brand span {
+      background: linear-gradient(90deg, #10b981, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .mode-switch {
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 9999px;
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .mode-btn {
+      padding: 6px 16px;
+      border-radius: 9999px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #042f24;
+      font-weight: 600;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 28px 24px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Video HUD */
+    .viewport-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.8);
+    }
+
+    #webcam-video, #backend-stream {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    #output-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      pointer-events: none;
+    }
+
+    /* HUD Overlays */
+    .hud-header {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .status-pill {
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 9999px;
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .fps-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--accent-cyan);
+    }
+
+    /* Control Toolbar */
+    .controls-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      color: #042f24;
+      font-weight: 600;
+      border-color: var(--accent);
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+
+    .btn.primary:hover {
+      background: #059669;
+    }
+
+    .btn.active {
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+      background: rgba(6, 182, 212, 0.1);
+    }
+
+    /* Sidebar / Gesture Details */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 22px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .gesture-hero {
+      text-align: center;
+      padding: 24px 16px;
+      position: relative;
+      overflow: hidden;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.08) 0%, rgba(0, 0, 0, 0.2) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .gesture-emoji {
+      font-size: 72px;
+      line-height: 1;
+      margin-bottom: 14px;
+      display: inline-block;
+      transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .gesture-name {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+
+    .gesture-sub {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 600;
+    }
+
+    /* Finger Status Grid */
+    .finger-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .finger-pill {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 4px;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+
+    .finger-pill.active {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .finger-title {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .finger-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+
+    .finger-pill.active .finger-val {
+      color: var(--accent);
+    }
+
+    /* Gesture Reference Guide */
+    .reference-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .reference-list::-webkit-scrollbar {
+      width: 4px;
+    }
+    .reference-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+    }
+
+    .reference-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      transition: background 0.2s ease;
+    }
+
+    .reference-item.highlight {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: var(--accent);
+    }
+
+    .ref-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ref-emoji {
+      font-size: 20px;
+    }
+
+    .ref-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .ref-pattern {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* History Log */
+    .history-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      border-left: 3px solid var(--accent-cyan);
+    }
+
+    .history-time {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">🖐️</div>
+      <div>
+        <h1>Hand Gesture <span>AI</span></h1>
+      </div>
+    </div>
+
+    <!-- Mode Selector -->
+    <div class="mode-switch">
+      <button class="mode-btn active" id="btn-browser-mode" onclick="switchMode('browser')">
+        ⚡ 60 FPS Browser GPU
+      </button>
+      <button class="mode-btn" id="btn-server-mode" onclick="switchMode('server')">
+        🐍 Python OpenCV Feed
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Body -->
+  <main>
+    <!-- Left: Video Canvas Section -->
+    <div class="viewport-card">
+      <div class="video-wrapper">
+        <!-- Browser Mode -->
+        <video id="webcam-video" playsinline></video>
+        <canvas id="output-canvas"></canvas>
+
+        <!-- Backend Stream Mode -->
+        <img id="backend-stream" style="display: none;" src="" alt="Python Stream">
+
+        <!-- HUD Overlay -->
+        <div class="hud-header">
+          <div class="status-pill">
+            <span class="pulse-dot" id="live-indicator"></span>
+            <span id="status-text">Real-Time AI Active</span>
+          </div>
+          <div class="status-pill fps-badge" id="fps-display">
+            FPS: --
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls-toolbar">
+        <div class="btn-group">
+          <button class="btn primary" id="btn-toggle-cam" onclick="toggleCamera()">
+            <span id="cam-icon">📹</span> <span id="cam-text">Stop Camera</span>
+          </button>
+          <button class="btn active" id="btn-landmarks" onclick="toggleLandmarks()">
+            ✨ Landmarks: ON
+          </button>
+          <button class="btn" id="btn-mirror" onclick="toggleMirror()">
+            🔄 Mirror
+          </button>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn" onclick="captureSnapshot()">
+            📸 Snapshot
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Sidebar with Detection Data -->
+    <aside class="sidebar">
+      <!-- Main Live Gesture Display -->
+      <div class="card">
+        <div class="gesture-hero">
+          <div class="gesture-emoji" id="hero-emoji">👋</div>
+          <div class="gesture-name" id="hero-name">Show Hand</div>
+          <div class="gesture-sub" id="hero-sub">Position hand in camera frame</div>
+        </div>
+
+        <!-- 5-Finger Detection Grid -->
+        <div class="finger-grid">
+          <div class="finger-pill" id="pill-thumb">
+            <div class="finger-title">Thumb</div>
+            <div class="finger-val" id="val-thumb">0</div>
+          </div>
+          <div class="finger-pill" id="pill-index">
+            <div class="finger-title">Index</div>
+            <div class="finger-val" id="val-index">0</div>
+          </div>
+          <div class="finger-pill" id="pill-mid">
+            <div class="finger-title">Middle</div>
+            <div class="finger-val" id="val-mid">0</div>
+          </div>
+          <div class="finger-pill" id="pill-ring">
+            <div class="finger-title">Ring</div>
+            <div class="finger-val" id="val-ring">0</div>
+          </div>
+          <div class="finger-pill" id="pill-pinky">
+            <div class="finger-title">Pinky</div>
+            <div class="finger-val" id="val-pinky">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Supported Gesture Library -->
+      <div class="card">
+        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">
+          Gesture Catalog
+        </h3>
+        <div class="reference-list">
+          <div class="reference-item" id="ref-fist">
+            <div class="ref-info">
+              <span class="ref-emoji">✊</span>
+              <span class="ref-name">Fist</span>
+            </div>
+            <span class="ref-pattern">[0, 0, 0, 0, 0]</span>
+          </div>
+          <div class="reference-item" id="ref-palm">
+            <div class="ref-info">
+              <span class="ref-emoji">✋</span>
+              <span class="ref-name">Open Palm</span>
+            </div>
+            <span class="ref-pattern">[1, 1, 1, 1, 1]</span>
+          </div>
+          <div class="reference-item" id="ref-point">
+            <div class="ref-info">
+              <span class="ref-emoji">☝️</span>
+              <span class="ref-name">Point</span>
+            </div>
+            <span class="ref-pattern">[0, 1, 0, 0, 0]</span>
+          </div>
+          <div class="reference-item" id="ref-peace">
+            <div class="ref-info">
+              <span class="ref-emoji">✌️</span>
+              <span class="ref-name">Peace</span>
+            </div>
+            <span class="ref-pattern">[0, 1, 1, 0, 0]</span>
+          </div>
+          <div class="reference-item" id="ref-thumbs">
+            <div class="ref-info">
+              <span class="ref-emoji">👍</span>
+              <span class="ref-name">Thumbs Up</span>
+            </div>
+            <span class="ref-pattern">[1, 0, 0, 0, 0]</span>
+          </div>
+          <div class="reference-item" id="ref-rock">
+            <div class="ref-info">
+              <span class="ref-emoji">🤘</span>
+              <span class="ref-name">Rock On</span>
+            </div>
+            <span class="ref-pattern">[0, 1, 0, 0, 1]</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gesture Timeline / Activity Feed -->
+      <div class="card">
+        <h3 style="font-size: 1rem; margin-bottom: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;">
+          Recent Gestures
+        </h3>
+        <div class="history-feed" id="history-feed">
+          <div class="history-item">
+            <span>👋 Ready for gestures</span>
+            <span class="history-time">now</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // State
+    let currentMode = 'browser';
+    let cameraRunning = true;
+    let showLandmarks = true;
+    let isMirrored = true;
+    let cameraInstance = null;
+    let handsInstance = null;
+    let lastGesture = null;
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+    let currentFps = 0;
+    let pollInterval = null;
+
+    // Elements
+    const videoElement = document.getElementById('webcam-video');
+    const canvasElement = document.getElementById('output-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const backendStream = document.getElementById('backend-stream');
+    const heroEmoji = document.getElementById('hero-emoji');
+    const heroName = document.getElementById('hero-name');
+    const heroSub = document.getElementById('hero-sub');
+    const fpsDisplay = document.getElementById('fps-display');
+    const historyFeed = document.getElementById('history-feed');
+
+    const pills = [
+      { id: 'pill-thumb', val: 'val-thumb' },
+      { id: 'pill-index', val: 'val-index' },
+      { id: 'pill-mid',   val: 'val-mid' },
+      { id: 'pill-ring',  val: 'val-ring' },
+      { id: 'pill-pinky', val: 'val-pinky' }
+    ];
+
+    // Landmark IDs matching Python
+    const TIP_IDS = [4, 8, 12, 16, 20];
+
+    // Compute fingers up from landmark array
+    function computeFingersUp(landmarks) {
+      const fingers = [];
+      // Thumb heuristic
+      fingers.push(landmarks[TIP_IDS[0]].x < landmarks[TIP_IDS[0] - 1].x ? 1 : 0);
+      // Other 4 fingers
+      for (let i = 1; i < 5; i++) {
+        fingers.push(landmarks[TIP_IDS[i]].y < landmarks[TIP_IDS[i] - 2].y ? 1 : 0);
+      }
+      return fingers;
+    }
+
+    // Classify Gesture matching Python project logic
+    function classifyGesture(f) {
+      const total = f.reduce((a, b) => a + b, 0);
+      if (total === 0) return { name: "Fist", emoji: "✊", ref: "ref-fist" };
+      if (total === 5) return { name: "Open Palm", emoji: "✋", ref: "ref-palm" };
+      if (f[0] === 0 && f[1] === 1 && f[2] === 0 && f[3] === 0 && f[4] === 0) return { name: "Point", emoji: "☝️", ref: "ref-point" };
+      if (f[0] === 0 && f[1] === 1 && f[2] === 1 && f[3] === 0 && f[4] === 0) return { name: "Peace", emoji: "✌️", ref: "ref-peace" };
+      if (f[0] === 1 && f[1] === 0 && f[2] === 0 && f[3] === 0 && f[4] === 0) return { name: "Thumbs Up", emoji: "👍", ref: "ref-thumbs" };
+      if (f[0] === 0 && f[1] === 1 && f[2] === 0 && f[3] === 0 && f[4] === 1) return { name: "Rock On", emoji: "🤘", ref: "ref-rock" };
+      return { name: `Custom [${f.join(',')}]`, emoji: "🖐️", ref: null };
+    }
+
+    // Update UI elements
+    function updateUI(gestureData, fingers) {
+      heroEmoji.textContent = gestureData.emoji;
+      heroName.textContent = gestureData.name;
+      heroSub.textContent = `Pattern: [${fingers.join(', ')}]`;
+      heroEmoji.style.transform = 'scale(1.15)';
+      setTimeout(() => { heroEmoji.style.transform = 'scale(1)'; }, 150);
+
+      // Update 5 pills
+      for (let i = 0; i < 5; i++) {
+        const pill = document.getElementById(pills[i].id);
+        const val = document.getElementById(pills[i].val);
+        if (fingers[i] === 1) {
+          pill.classList.add('active');
+          val.textContent = 'UP';
+        } else {
+          pill.classList.remove('active');
+          val.textContent = 'DOWN';
+        }
+      }
+
+      // Update Catalog highlights
+      document.querySelectorAll('.reference-item').forEach(el => el.classList.remove('highlight'));
+      if (gestureData.ref) {
+        const activeRef = document.getElementById(gestureData.ref);
+        if (activeRef) activeRef.classList.add('highlight');
+      }
+
+      // Add to history timeline if changed
+      if (lastGesture !== gestureData.name) {
+        lastGesture = gestureData.name;
+        addHistory(gestureData);
+      }
+    }
+
+    function addHistory(gestureData) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.innerHTML = `<span>${gestureData.emoji} ${gestureData.name}</span><span class="history-time">${timeStr}</span>`;
+      historyFeed.insertBefore(item, historyFeed.firstChild);
+      if (historyFeed.children.length > 8) {
+        historyFeed.removeChild(historyFeed.lastChild);
+      }
+    }
+
+    // MediaPipe Results Handler
+    function onResults(results) {
+      // Calculate FPS
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        currentFps = Math.round((frameCount * 1000) / (now - lastFpsTime));
+        fpsDisplay.textContent = `FPS: ${currentFps}`;
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+
+      // Match canvas size to video aspect ratio
+      if (canvasElement.width !== videoElement.videoWidth || canvasElement.height !== videoElement.videoHeight) {
+        canvasElement.width = videoElement.videoWidth || 640;
+        canvasElement.height = videoElement.videoHeight || 480;
+      }
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        for (const landmarks of results.multiHandLandmarks) {
+          // Draw skeleton if enabled
+          if (showLandmarks) {
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#06b6d4', lineWidth: 4 });
+            drawLandmarks(canvasCtx, landmarks, { color: '#10b981', lineWidth: 2, radius: 5 });
+          }
+
+          // Compute & Classify
+          const fingers = computeFingersUp(landmarks);
+          const gestureInfo = classifyGesture(fingers);
+          updateUI(gestureInfo, fingers);
+        }
+      } else {
+        heroSub.textContent = "Waiting for hand detection...";
+      }
+
+      canvasCtx.restore();
+    }
+
+    // Initialize in-browser MediaPipe Hands
+    function initBrowserMediaPipe() {
+      handsInstance = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      handsInstance.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+      });
+
+      handsInstance.onResults(onResults);
+
+      cameraInstance = new Camera(videoElement, {
+        onFrame: async () => {
+          if (cameraRunning && currentMode === 'browser') {
+            await handsInstance.send({ image: videoElement });
+          }
+        },
+        width: 1280,
+        height: 720
+      });
+
+      cameraInstance.start().then(() => {
+        document.getElementById('status-text').textContent = 'Camera & MediaPipe Ready (60 FPS)';
+      }).catch(err => {
+        console.warn("Camera start warning:", err);
+        document.getElementById('status-text').textContent = 'Webcam starting...';
+      });
+    }
+
+    // Mode Switching
+    function switchMode(mode) {
+      currentMode = mode;
+      document.getElementById('btn-browser-mode').classList.toggle('active', mode === 'browser');
+      document.getElementById('btn-server-mode').classList.toggle('active', mode === 'server');
+
+      if (mode === 'browser') {
+        backendStream.style.display = 'none';
+        backendStream.src = '';
+        videoElement.style.display = 'block';
+        canvasElement.style.display = 'block';
+        if (pollInterval) clearInterval(pollInterval);
+        if (!cameraInstance) {
+          initBrowserMediaPipe();
+        } else {
+          cameraInstance.start();
+        }
+        document.getElementById('status-text').textContent = 'Browser GPU Mode (Ultra-Fast 60 FPS)';
+      } else {
+        if (cameraInstance) {
+          cameraInstance.stop();
+        }
+        videoElement.style.display = 'none';
+        canvasElement.style.display = 'none';
+        backendStream.style.display = 'block';
+        backendStream.src = '/video_feed';
+        document.getElementById('status-text').textContent = 'Python OpenCV Backend Mode';
+
+        // Poll backend API for gestures
+        pollInterval = setInterval(async () => {
+          try {
+            const res = await fetch('/api/status');
+            const data = await res.json();
+            if (data.current_gesture && data.current_gesture.active) {
+              updateUI({
+                name: data.current_gesture.gesture,
+                emoji: data.current_gesture.emoji
+              }, data.current_gesture.fingers);
+            }
+          } catch(e) {}
+        }, 150);
+      }
+    }
+
+    // Toggle Camera
+    function toggleCamera() {
+      cameraRunning = !cameraRunning;
+      const camBtnText = document.getElementById('cam-text');
+      const camIcon = document.getElementById('cam-icon');
+      if (cameraRunning) {
+        camBtnText.textContent = 'Stop Camera';
+        camIcon.textContent = '📹';
+        if (currentMode === 'browser') cameraInstance.start();
+        else backendStream.src = '/video_feed';
+      } else {
+        camBtnText.textContent = 'Start Camera';
+        camIcon.textContent = '▶️';
+        if (currentMode === 'browser') cameraInstance.stop();
+        else backendStream.src = '';
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      }
+    }
+
+    // Toggle Landmarks
+    function toggleLandmarks() {
+      showLandmarks = !showLandmarks;
+      const btn = document.getElementById('btn-landmarks');
+      btn.textContent = showLandmarks ? '✨ Landmarks: ON' : '✨ Landmarks: OFF';
+      btn.classList.toggle('active', showLandmarks);
+      if (!showLandmarks) {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      }
+    }
+
+    // Toggle Mirroring
+    function toggleMirror() {
+      isMirrored = !isMirrored;
+      const transform = isMirrored ? 'scaleX(-1)' : 'scaleX(1)';
+      videoElement.style.transform = transform;
+      canvasElement.style.transform = transform;
+      backendStream.style.transform = transform;
+    }
+
+    // Capture Snapshot
+    function captureSnapshot() {
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = videoElement.videoWidth || 1280;
+      snapCanvas.height = videoElement.videoHeight || 720;
+      const ctx = snapCanvas.getContext('2d');
+
+      if (isMirrored) {
+        ctx.translate(snapCanvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(videoElement, 0, 0);
+      if (showLandmarks) {
+        ctx.drawImage(canvasElement, 0, 0);
+      }
+
+      // Add watermark
+      ctx.restore();
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 28px Outfit, sans-serif';
+      ctx.fillText(`Hand Gesture: ${heroName.textContent}`, 30, snapCanvas.height - 30);
+
+      const link = document.createElement('a');
+      link.download = `gesture-${heroName.textContent.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.png`;
+      link.href = snapCanvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Start in high-speed browser mode
+    window.addEventListener('load', () => {
+      initBrowserMediaPipe();
+    });
+  </script>
+</body>
+</html>
+
